@@ -11,7 +11,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "android": "expo start --android",
-    "ios": "expo start --ios"
+    "ios": "expo start --ios",
+    "postinstall": "bash scripts/restore-identy-sdk.sh || true"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

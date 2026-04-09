@@ -34,7 +34,7 @@ fi
 
 PASSWORD=$(echo "$PASSWORD_B64" | base64 -d 2>/dev/null)
 
-TARBALL_URL="https://identy.jfrog.io/identy/api/npm/identy-npm/@identy/identy-face/-/@identy/identy-face-5.0.1.tgz"
+TARBALL_URL="https://identy.jfrog.io/identy/api/npm/identy-npm/@identy/identy-face/-/@identy/identy-face-6.3.0-b01.tgz"
 TMP_FILE=$(mktemp /tmp/identy-face-XXXXXX.tgz)
 TMP_DIR=$(mktemp -d /tmp/identy-extract-XXXXXX)
 

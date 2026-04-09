@@ -17,8 +17,8 @@
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
-    "@identy/identy-common": "3.0.0",
-    "@identy/identy-face": "5.0.1",
+    "@identy/identy-common": "5.0.0",
+    "@identy/identy-face": "6.3.0-b01",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-navigation/bottom-tabs": "^7.15.9",
     "@react-navigation/elements": "^2.9.2",

@@ -1,16 +1,21 @@
 /**
- * Serviço de SDK Identy
+ * Servico de SDK Identy
  *
- * IMPORTANTE: O pacote @identy/identy-face é um SDK **exclusivamente web**
- * (depende de jQuery, canvas, WASM, DOM APIs). Ele NÃO pode ser importado
- * diretamente no runtime do React Native.
+ * IMPORTANTE: O pacote @identy/identy-face v6.3.0 e um SDK **exclusivamente web**
+ * (depende de jQuery, canvas, WASM, DOM APIs). Ele NAO pode ser importado
+ * diretamente no runtime do React Native (Android/iOS nativo).
  *
- * Em React Native (Expo Go / dispositivo), o SDK é executado dentro de uma
+ * Em React Native (Expo Go / dispositivo), o SDK e executado dentro de uma
  * WebView — veja `app/(tabs)/(screens)/facial-capture.tsx` e o HTML que
- * carrega o SDK via <script> tag.
+ * carrega o SDK via <script> tag servida por scripts/sdk-server.js.
  *
- * Este serviço fornece apenas a lógica de backend (autenticação + envio)
+ * No Expo Web (browser), o SDK pode ser importado diretamente via
+ * dynamic import() — requer webpack com css-loader configurado.
+ *
+ * Este servico fornece apenas a logica de backend (autenticacao + envio)
  * que funciona em qualquer runtime JavaScript.
+ *
+ * Versao SDK: @identy/identy-face@6.3.0-b01 + @identy/identy-common@5.0.0
  */
 
 import { CREDIFY_CONFIG } from '@/hooks/use-facial-config';

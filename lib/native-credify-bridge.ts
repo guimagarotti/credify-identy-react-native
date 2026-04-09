@@ -1,4 +1,20 @@
 import { NativeModules, Platform } from "react-native";
+import { CREDIFY_CONFIG } from '@/hooks/use-facial-config';
+
+function normalizeCredifyApiBase(url: string): string {
+  return url.trim().replace(/\/+$/, "").replace(/\/livelinesscapture$/i, "");
+}
+
+function resolveLivenessEndpoint(url: string): string {
+  const normalized = url.trim().replace(/\/+$/, "");
+  return /\/livelinesscapture$/i.test(normalized)
+    ? normalized
+    : `${normalizeCredifyApiBase(normalized)}/livelinesscapture`;
+}
+
+function resolveAuthEndpoint(url: string): string {
+  return `${normalizeCredifyApiBase(url)}/auth`;
+}
 
 /**
  * Native Bridge para SDK Credify - Versão Corrigida
@@ -66,11 +82,15 @@ class CredifyBackendClient {
   private modelUrl = "";
   private pubKeyUrl = "";
   private apiBase = process.env.REACT_APP_URL_BASE || "https://app-iden.credify.com.br";
-  private livenessEndpoint = process.env.REACT_APP_URL_BASE_CREDIFY || "https://api.credify.com.br/livelinesscapture";
-  private authEndpoint = "https://api.credify.com.br/auth";
+  private livenessEndpoint = resolveLivenessEndpoint(
+    process.env.REACT_APP_URL_BASE_CREDIFY || "https://api.credify.com.br/livelinesscapture"
+  );
+  private authEndpoint = resolveAuthEndpoint(
+    process.env.REACT_APP_URL_BASE_CREDIFY || "https://api.credify.com.br/livelinesscapture"
+  );
   private authToken: string | null = null;
-  private clientID = "37377";
-  private clientSecret = "60241027";
+  private clientID = CREDIFY_CONFIG.CLIENT_ID;
+  private clientSecret = CREDIFY_CONFIG.CLIENT_SECRET;
   private requestID = "";
   private application = "";
   private wero = "";
@@ -82,10 +102,10 @@ class CredifyBackendClient {
     try {
       this.modelUrl = options.modelUrl;
       this.pubKeyUrl = options.pubKeyUrl;
-      this.requestID = options.requestID || "";
-      this.application = options.application || "3";
-      this.wero = options.wero ?? "";
-      this.keyUrl = options.keyUrl ?? "";
+      this.requestID = options.requestID || `native-${Date.now()}`;
+      this.application = options.application || CREDIFY_CONFIG.APPLICATION;
+      this.wero = options.wero ?? CREDIFY_CONFIG.WERO;
+      this.keyUrl = options.keyUrl ?? CREDIFY_CONFIG.AS_SERVER_CONFIG;
 
       if (options.clientID) this.clientID = options.clientID;
       if (options.clientSecret) this.clientSecret = options.clientSecret;
@@ -246,9 +266,9 @@ class CredifyBackendClient {
         "LogAPITrigger": "true",
         "RequestID": this.requestID,
         "requestID": this.requestID,
-        "application": "3",
-        "wero": "",
-        "keyurl": "",
+        "application": this.application,
+        "wero": this.wero,
+        "keyurl": this.keyUrl,
         "Authorization": `Bearer ${this.authToken}`,
       };
 

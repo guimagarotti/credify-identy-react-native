@@ -10,6 +10,7 @@
  * - Integração com backend Credify
  */
 
+import { Platform } from 'react-native';
 import { CREDIFY_CONFIG } from '@/hooks/use-facial-config';
 
 export interface InitializeOptions {
@@ -121,6 +122,12 @@ export class IdentyService {
     console.log('[IdentyService] 🔧 Pré-inicializando SDK');
 
     this.options = options;
+
+    if (Platform.OS !== 'web') {
+      throw new Error(
+        'O pacote @identy/identy-face é voltado para Web e não deve ser importado diretamente no React Native. Use o fluxo via WebView para iOS/Android.'
+      );
+    }
 
     try {
       // Definir publicPath antes de importar
@@ -260,6 +267,7 @@ export class IdentyService {
 
       // Inicializar
       await sdkInstance.initialize();
+      this.sdkInitialized = true;
       console.log('[IdentyService] ✅ SDK inicializado com sucesso');
 
       return sdkInstance;

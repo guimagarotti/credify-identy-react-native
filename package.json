@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start",
     "dev:metro": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start",
+    "dev:sdk": "node scripts/sdk-server.js",
     "check": "tsc --noEmit",
     "lint": "expo lint",
     "format": "prettier --write .",

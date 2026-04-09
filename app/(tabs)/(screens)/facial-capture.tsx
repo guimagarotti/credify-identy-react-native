@@ -49,7 +49,7 @@ interface FacialCaptureProps {
 const SDK_SERVER_PORT = 9876;
 
 // ─────────────────────────────────────────────────────────────
-// Utilitários
+// Utilitarios
 // ─────────────────────────────────────────────────────────────
 
 function normalizeApiBase(url: string): string {
@@ -78,21 +78,19 @@ function buildRequestId(): string {
  * Usamos o mesmo IP para acessar o SDK server local.
  */
 function getDevServerHost(): string {
-  // Expo Go: expoConfig.hostUri = "192.168.x.x:8081"
   const hostUri =
     Constants.expoConfig?.hostUri ||
-    (Constants as any).manifest?.debuggerHost ||
-    (Constants as any).manifest?.hostUri ||
+    (Constants as Record<string, unknown>).manifest?.debuggerHost ||
+    (Constants as Record<string, unknown>).manifest?.hostUri ||
     '';
 
-  if (hostUri) {
+  if (typeof hostUri === 'string' && hostUri) {
     const host = hostUri.split(':')[0];
     if (host && host !== 'localhost' && host !== '127.0.0.1') {
       return host;
     }
   }
 
-  // Fallback: localhost (funciona no simulador, não no device)
   return 'localhost';
 }
 
@@ -102,7 +100,75 @@ function getSdkServerUrl(): string {
 }
 
 // ─────────────────────────────────────────────────────────────
-// HTML da WebView — Carrega SDK Identy do servidor local
+// SDK Web (Expo Web / Browser) - Importacao dinamica
+//
+// No Expo Web (Platform.OS === 'web'), o FaceSDK pode ser
+// importado diretamente porque roda no browser (DOM, Canvas,
+// WASM, jQuery).
+//
+// Para funcionar, o webpack/Metro Web precisa processar CSS:
+// - Adicione style-loader + css-loader no webpack.config.js
+// - Ou use craco/customize-cra se estiver com CRA
+//
+// Se a importacao direta falhar (falta de webpack config),
+// o componente cai automaticamente no modo WebView.
+// ─────────────────────────────────────────────────────────────
+
+let webSdkModule: {
+  FaceSDK: new (options: Record<string, unknown>) => {
+    initialize(): Promise<void>;
+    capture(): Promise<Blob>;
+    abort(): Promise<void>;
+    getLocalization(): unknown;
+  };
+  preInitialize: (
+    modelUrl?: { URL: string | { url: string; headers?: Array<{ name: string; value: string }> } },
+    pubKeyUrl?: { URL: string | { url: string; headers?: Array<{ name: string; value: string }> } },
+    timeUrl?: { URL: string | { url: string; headers?: Array<{ name: string; value: string }> } }
+  ) => Promise<unknown>;
+  AsThreshold: Record<string, string>;
+  Template: Record<string, string>;
+  AppUI: Record<string, string>;
+} | null = null;
+
+let webSdkLoadAttempted = false;
+let webSdkPreInitDone = false;
+
+/**
+ * Tenta carregar o SDK Identy diretamente no browser (Expo Web).
+ * Retorna true se o SDK foi carregado com sucesso.
+ */
+async function tryLoadWebSdk(): Promise<boolean> {
+  if (Platform.OS !== 'web') return false;
+  if (webSdkModule) return true;
+  if (webSdkLoadAttempted) return false;
+
+  webSdkLoadAttempted = true;
+
+  try {
+    // Dynamic import: only works when webpack can resolve @identy/identy-face
+    // and process its CSS imports (requires css-loader + style-loader).
+    const sdk = await import('@identy/identy-face');
+    if (sdk && sdk.FaceSDK) {
+      webSdkModule = {
+        FaceSDK: sdk.FaceSDK,
+        preInitialize: sdk.FaceSDK.preInitialize.bind(sdk.FaceSDK),
+        AsThreshold: sdk.AsThreshold || {},
+        Template: sdk.Template || {},
+        AppUI: sdk.AppUI || {},
+      };
+      console.log('[FacialCapture] SDK Web carregado com sucesso via import direto');
+      return true;
+    }
+  } catch (err) {
+    console.warn('[FacialCapture] Import direto do SDK falhou (esperado em native):', err);
+  }
+
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────
+// HTML da WebView - Carrega SDK Identy v6.3.0 do servidor local
 //
 // O SDK @identy/identy-face e um pacote privado (JFrog) web-only.
 // Ele e servido localmente por scripts/sdk-server.js na porta 9876.
@@ -110,14 +176,14 @@ function getSdkServerUrl(): string {
 // para captura facial com liveness detection via WASM.
 //
 // Fluxo:
-// 1. WebView carrega → WEBVIEW_READY
-// 2. RN envia INIT_SDK com a URL do SDK server
+// 1. WebView carrega -> WEBVIEW_READY
+// 2. RN envia INIT_SDK com a URL do SDK server e config
 // 3. WebView carrega <script src="http://IP:9876/identy-face.js">
-//    + CSS + inicia FaceSDK
-// 4. SDK pronto → SDK_READY
+//    + CSS + chama FaceSDK.preInitialize + new FaceSDK + initialize
+// 4. SDK pronto -> SDK_READY
 // 5. RN envia START_CAPTURE
-// 6. FaceSDK.capture() → Blob → base64 → CAPTURE_RESULT
-// 7. Se SDK falhar → SDK_LOAD_FAILED → fallback camera nativa
+// 6. FaceSDK.capture() -> Blob -> base64 -> CAPTURE_RESULT
+// 7. Se SDK falhar -> SDK_LOAD_FAILED -> fallback camera nativa
 // ─────────────────────────────────────────────────────────────
 
 function buildWebViewHTML(): string {
@@ -262,19 +328,18 @@ function buildWebViewHTML(): string {
       s.async = true;
       var tid = setTimeout(function() {
         reject(new Error('Timeout carregando SDK de ' + url));
-      }, timeoutMs || 15000);
+      }, timeoutMs || 20000);
       s.onload = function() { clearTimeout(tid); resolve(); };
       s.onerror = function(e) {
         clearTimeout(tid);
-        reject(new Error('Falha ao carregar SDK de ' + url + '. Verifique se o servidor SDK esta rodando (node scripts/sdk-server.js)'));
+        reject(new Error('Falha ao carregar SDK de ' + url + '. Verifique se o servidor SDK esta rodando (pnpm dev:sdk)'));
       };
       document.head.appendChild(s);
     });
   }
 
   function findSdkExports() {
-    // UMD module — when loaded via <script>, it may attach to various globals
-    // Check multiple possible locations
+    // UMD module - when loaded via <script>, check multiple locations
     if (typeof module !== 'undefined' && module.exports && module.exports.FaceSDK) {
       return module.exports;
     }
@@ -283,7 +348,6 @@ function buildWebViewHTML(): string {
     if (window.FaceSDK) return { FaceSDK: window.FaceSDK };
 
     // The SDK uses webpack and may expose exports differently
-    // Try to find FaceSDK in any window property
     var keys = Object.keys(window);
     for (var i = 0; i < keys.length; i++) {
       var k = keys[i];
@@ -299,9 +363,9 @@ function buildWebViewHTML(): string {
     return null;
   }
 
-  // --- Initialize SDK ---
+  // --- Initialize SDK v6.3.0 ---
   async function initializeSdk(sdkUrl, conf) {
-    showStatus('Carregando SDK Identy', 'Baixando SDK do servidor local...', 'Carregando SDK...');
+    showStatus('Carregando SDK Identy', 'Baixando SDK v6.3.0 do servidor local...', 'Carregando SDK...');
     send('SDK_LOADING', { stage: 'script' });
 
     // Set webpack public path for WASM/worker loading
@@ -314,7 +378,7 @@ function buildWebViewHTML(): string {
 
     // Load JS
     try {
-      await loadScript(sdkUrl + '/identy-face.js', 20000);
+      await loadScript(sdkUrl + '/identy-face.js', 25000);
     } catch(loadErr) {
       log('Falha ao carregar SDK JS: ' + loadErr.message);
       send('SDK_LOAD_FAILED', { error: loadErr.message });
@@ -325,44 +389,48 @@ function buildWebViewHTML(): string {
     // Find exports
     sdkGlobal = findSdkExports();
     if (!sdkGlobal || !sdkGlobal.FaceSDK) {
-      // Try with a brief delay (some webpack bundles need a tick)
-      await new Promise(function(r) { setTimeout(r, 500); });
+      await new Promise(function(r) { setTimeout(r, 1000); });
       sdkGlobal = findSdkExports();
     }
 
     if (!sdkGlobal || !sdkGlobal.FaceSDK) {
-      var errMsg = 'SDK carregado mas FaceSDK nao foi encontrado no escopo global';
+      var errMsg = 'SDK carregado mas FaceSDK nao foi encontrado no escopo global. Versao: v6.3.0';
       log(errMsg);
       send('SDK_LOAD_FAILED', { error: errMsg });
       showStatus('SDK indisponivel', errMsg, null, true);
       return;
     }
 
-    log('FaceSDK encontrado, iniciando preInitialize...');
-    showStatus('Inicializando SDK', 'Configurando modelos e WASM...', 'Inicializando...');
-    send('SDK_LOADING', { stage: 'initialize' });
+    var sdkVersion = 'unknown';
+    try { sdkVersion = sdkGlobal.FaceSDK.version ? sdkGlobal.FaceSDK.version() : 'unknown'; } catch(e) {}
+    log('FaceSDK encontrado, versao: ' + sdkVersion);
+    showStatus('Inicializando SDK', 'Executando preInitialize + initialize...', 'Inicializando...');
+    send('SDK_LOADING', { stage: 'initialize', version: sdkVersion });
 
     try {
-      // preInitialize — downloads WASM models
+      // Step 1: preInitialize - downloads WASM models
       if (typeof sdkGlobal.FaceSDK.preInitialize === 'function') {
         var modelUrl = conf.modelUrl || (sdkUrl + '/assets');
-        log('preInitialize com modelUrl: ' + modelUrl);
+        var pubKeyUrl = conf.pubKeyUrl || '';
+        log('preInitialize com modelUrl: ' + modelUrl + ', pubKeyUrl: ' + pubKeyUrl);
+
         await sdkGlobal.FaceSDK.preInitialize(
           { URL: modelUrl },
-          { URL: { url: conf.pubKeyUrl || '', headers: [
+          { URL: { url: pubKeyUrl, headers: [
             { name: 'LogAPITrigger', value: 'true' },
-            { name: 'requestID', value: 'sdk-' + Date.now() }
-          ]}}
+            { name: 'requestID', value: 'sdk-preinit-' + Date.now() }
+          ]}},
+          conf.timeUrl ? { URL: conf.timeUrl } : undefined
         );
         log('preInitialize OK');
       }
 
-      // Determine Template and other enums
+      // Step 2: Determine enums
       var Template = sdkGlobal.Template || { PNG: 'PNG' };
-      var AppUI = sdkGlobal.AppUI || {};
-      var AsThreshold = sdkGlobal.AsThreshold || {};
+      var AsThreshold = sdkGlobal.AsThreshold || { MEDIUM: 'MEDIUM' };
+      var AppUI = sdkGlobal.AppUI || { TICKING: 'TICKING' };
 
-      // Create SDK instance
+      // Step 3: Create SDK instance with v6.3.0 options
       sdkInstance = new sdkGlobal.FaceSDK({
         enableAS: true,
         asThreshold: AsThreshold.MEDIUM || 'MEDIUM',
@@ -372,28 +440,29 @@ function buildWebViewHTML(): string {
         allowClose: true,
         enableEyesStatusDetector: true,
         skipSupportCheck: false,
-        backend: 'wasm',
         transaction: { type: 1 },
         appUI: AppUI.TICKING || 'TICKING',
         allowCameraSelect: false,
         assisted: false,
         localization: { language: 'pt-BR' },
         graphics: { canvas: { label: 'white' } },
+        enableRetakeScreen: true,
+        enableBackgroundRemoval: false,
       });
 
       log('FaceSDK instanciado, chamando initialize()...');
 
-      // Initialize — sets up camera, WASM workers, etc.
+      // Step 4: Initialize with timeout
       await Promise.race([
         sdkInstance.initialize(),
         new Promise(function(_, rej) {
-          setTimeout(function() { rej(new Error('Timeout no initialize() - 30s')); }, 30000);
+          setTimeout(function() { rej(new Error('Timeout no initialize() - 45s')); }, 45000);
         })
       ]);
 
       log('SDK inicializado com sucesso!');
-      send('SDK_READY', { mode: 'sdk' });
-      showStatus('SDK Identy pronto', 'Pronto para captura facial.', null);
+      send('SDK_READY', { mode: 'sdk', version: sdkVersion });
+      showStatus('SDK Identy pronto', 'Pronto para captura facial com liveness detection.', null);
 
     } catch(initErr) {
       var msg = initErr && initErr.message ? initErr.message : String(initErr);
@@ -417,7 +486,9 @@ function buildWebViewHTML(): string {
 
       var captureResult = await sdkInstance.capture();
 
-      log('Captura concluida, tipo: ' + (typeof captureResult) + ', tamanho: ' + (captureResult ? captureResult.size || 0 : 0));
+      log('Captura concluida, tipo: ' + (typeof captureResult) +
+          ', isBlob: ' + (captureResult instanceof Blob) +
+          ', tamanho: ' + (captureResult ? captureResult.size || 0 : 0));
 
       // Convert Blob to base64
       if (captureResult instanceof Blob) {
@@ -430,21 +501,20 @@ function buildWebViewHTML(): string {
             imageData: base64,
             mode: 'sdk'
           });
-          showStatus('Captura concluida', 'Imagem capturada com sucesso pelo SDK.', null);
+          showStatus('Captura concluida', 'Imagem capturada com sucesso pelo SDK Identy.', null);
         };
         reader.onerror = function() {
-          send('CAPTURE_ERROR', { error: 'Falha ao converter imagem para base64' });
+          send('CAPTURE_ERROR', { error: 'Falha ao converter Blob para base64' });
           showStatus('Erro na conversao', 'Falha ao converter imagem.', null, true);
         };
         reader.readAsDataURL(captureResult);
       } else if (typeof captureResult === 'string') {
-        // Already base64 or data URL
         send('CAPTURE_RESULT', {
           status: 'success',
           imageData: captureResult,
           mode: 'sdk'
         });
-        showStatus('Captura concluida', 'Imagem capturada com sucesso pelo SDK.', null);
+        showStatus('Captura concluida', 'Imagem capturada com sucesso pelo SDK Identy.', null);
       } else {
         send('CAPTURE_ERROR', { error: 'Resultado inesperado do SDK: ' + typeof captureResult });
         showStatus('Erro', 'Resultado inesperado do SDK.', null, true);
@@ -458,7 +528,7 @@ function buildWebViewHTML(): string {
     }
   }
 
-  // --- Message handler ---
+  // --- Message handler (receives from RN via injectJavaScript) ---
   function onMessage(raw) {
     try {
       var m = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -493,12 +563,13 @@ function buildWebViewHTML(): string {
     }
   }
 
+  // Listen for messages from RN (dispatched via injectJavaScript)
   document.addEventListener('message', function(e) { onMessage(e.data); });
   window.addEventListener('message', function(e) { onMessage(e.data); });
 
-  showStatus('WebView pronta', 'Aguardando configuracao...', null);
+  showStatus('WebView pronta', 'Aguardando configuracao do SDK...', null);
   send('WEBVIEW_READY');
-  log('WebView inicializada');
+  log('WebView inicializada, aguardando INIT_SDK');
 })();
 </script>
 </body>
@@ -511,7 +582,7 @@ function buildWebViewHTML(): string {
 
 function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCaptureProps) {
   const [phase, setPhase] = useState<CapturePhase>('idle');
-  const [feedback, setFeedback] = useState('Carregando WebView...');
+  const [feedback, setFeedback] = useState('Carregando...');
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [redirectUrl, setRedirectUrl] = useState('');
@@ -520,15 +591,20 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
   const [isSdkReady, setIsSdkReady] = useState(false);
   const [isNativeCameraVisible, setIsNativeCameraVisible] = useState(false);
   const [isTakingPicture, setIsTakingPicture] = useState(false);
+  const [isWebPlatform, setIsWebPlatform] = useState(Platform.OS === 'web');
 
   const webViewRef = useRef<WebView>(null);
   const cameraRef = useRef<CameraView | null>(null);
   const authTokenRef = useRef<string | null>(null);
+  const webSdkInstanceRef = useRef<{
+    capture(): Promise<Blob>;
+    abort(): Promise<void>;
+  } | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
-  // ── URLs ───────────────────────────────────────────────────
+  // -- URLs --
   const credifyApiBase = normalizeApiBase(
-    process.env.REACT_APP_URL_BASE_CREDIFY || 'https://dev-api.credify.com.br/livelinesscapture'
+    process.env.REACT_APP_URL_BASE_CREDIFY || CREDIFY_CONFIG.LIVENESS_URL
   );
   const urlBase = normalizeApiBase(
     process.env.REACT_APP_URL_BASE || 'https://app-iden-dev.credify.com.br'
@@ -539,14 +615,35 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
 
   const webViewHTML = useMemo(() => buildWebViewHTML(), []);
 
-  // ── Lifecycle ──────────────────────────────────────────────
+  // -- Lifecycle --
   useEffect(() => {
-    console.log('[FacialCapture] Componente montado');
+    console.log('[FacialCapture] Componente montado, Platform:', Platform.OS);
     console.log('[FacialCapture] URLs:', { urlBase, credifyApiBase, livenessUrl, authUrl, sdkServerUrl });
-    return () => console.log('[FacialCapture] Componente desmontado');
-  }, [urlBase, credifyApiBase, livenessUrl, authUrl, sdkServerUrl]);
 
-  // ── Send to WebView via injectJavaScript ───────────────────
+    // On web, try to load SDK directly
+    if (Platform.OS === 'web') {
+      tryLoadWebSdk().then((loaded) => {
+        if (loaded) {
+          console.log('[FacialCapture] SDK Web disponivel via import direto');
+          setIsWebPlatform(true);
+          setIsWebViewReady(true); // No WebView needed on web
+          setFeedback('SDK Web pronto. Toque em "Iniciar Captura".');
+        } else {
+          console.log('[FacialCapture] Import direto do SDK falhou; usando WebView na web tambem');
+          setIsWebPlatform(false); // Fall back to WebView approach
+          setFeedback('Carregando WebView...');
+        }
+      });
+    } else {
+      setIsWebPlatform(false);
+      setFeedback('Carregando WebView...');
+    }
+
+    return () => console.log('[FacialCapture] Componente desmontado');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // -- Send to WebView via injectJavaScript --
   const sendToWebView = useCallback((message: Record<string, unknown>) => {
     if (!webViewRef.current) return;
     const js = `
@@ -561,7 +658,7 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
     webViewRef.current.injectJavaScript(js);
   }, []);
 
-  // ── Authentication ─────────────────────────────────────────
+  // -- Authentication --
   const authenticate = useCallback(async (): Promise<string> => {
     if (authTokenRef.current) return authTokenRef.current;
 
@@ -588,7 +685,7 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
     return token;
   }, [authUrl]);
 
-  // ── Submit to backend ──────────────────────────────────────
+  // -- Submit to backend --
   const submitToBackend = useCallback(
     async (imageBase64: string, retryOnAuth = true): Promise<Record<string, unknown>> => {
       const requestID = buildRequestId();
@@ -605,12 +702,13 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
 
       const formData = new FormData();
       if (Platform.OS === 'web') {
+        // Web: Blob is available
         const blob = new Blob([rawBase64], { type: 'text/plain' });
         formData.append('file', blob, 'bdata');
       } else {
-        // React Native FormData accepts { uri, type, name } objects
+        // React Native: use { uri, type, name } format
         formData.append('file', {
-          uri: `data:text/plain;base64,${Buffer.from ? Buffer.from(rawBase64).toString('base64') : rawBase64}`,
+          uri: `data:text/plain;base64,${rawBase64}`,
           type: 'text/plain',
           name: 'bdata',
         } as unknown as Blob);
@@ -647,11 +745,11 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
 
       if (!response.ok) {
         const errMsg =
-          (responseData as any)?.RESPOSTA?.LIVELINESS?.description ||
-          (responseData as any)?.RESPOSTA?.LIVELINESS?.message ||
-          (responseData as any)?.error ||
-          (responseData as any)?.message ||
-          (responseData as any)?.Message ||
+          (responseData as Record<string, Record<string, Record<string, string>>>)?.RESPOSTA?.LIVELINESS?.description ||
+          (responseData as Record<string, Record<string, Record<string, string>>>)?.RESPOSTA?.LIVELINESS?.message ||
+          (responseData as Record<string, string>)?.error ||
+          (responseData as Record<string, string>)?.message ||
+          (responseData as Record<string, string>)?.Message ||
           `Erro HTTP ${response.status}`;
         throw new Error(errMsg);
       }
@@ -661,43 +759,56 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
     [authenticate, livenessUrl]
   );
 
-  // ── Validate response ──────────────────────────────────────
+  // -- Validate response --
   const validateResponse = useCallback((resp: Record<string, unknown>): boolean => {
-    const code = (resp as any)?.RESPOSTA?.LIVELINESS?.code;
+    const resposta = resp?.RESPOSTA as Record<string, Record<string, number>> | undefined;
+    const code = resposta?.LIVELINESS?.code;
     return code === 200 || resp?.success === true || resp?.status === 'success';
   }, []);
 
   const getRedirectUrl = useCallback((resp: Record<string, unknown>): string | null => {
-    return (resp as any)?.RESPOSTA?.URL || (resp as any)?.redirectUrl || null;
+    const resposta = resp?.RESPOSTA as Record<string, string> | undefined;
+    return resposta?.URL || (resp?.redirectUrl as string) || null;
   }, []);
 
   const getErrorMessage = useCallback((resp: Record<string, unknown>): string => {
+    const resposta = resp?.RESPOSTA as Record<string, Record<string, string>> | undefined;
     return (
-      (resp as any)?.RESPOSTA?.LIVELINESS?.description ||
-      (resp as any)?.RESPOSTA?.LIVELINESS?.message ||
-      (resp as any)?.error ||
-      (resp as any)?.message ||
-      (resp as any)?.Message ||
+      resposta?.LIVELINESS?.description ||
+      resposta?.LIVELINESS?.message ||
+      (resp?.error as string) ||
+      (resp?.message as string) ||
+      (resp?.Message as string) ||
       'Erro desconhecido'
     );
   }, []);
 
-  // ── Cancel ─────────────────────────────────────────────────
+  // -- Cancel --
   const handleCancel = useCallback(() => {
-    sendToWebView({ type: 'STOP_CAPTURE' });
+    if (!isWebPlatform) {
+      sendToWebView({ type: 'STOP_CAPTURE' });
+    }
+    if (webSdkInstanceRef.current) {
+      webSdkInstanceRef.current.abort().catch(() => {});
+      webSdkInstanceRef.current = null;
+    }
     setIsNativeCameraVisible(false);
     setIsTakingPicture(false);
     setPhase('idle');
-    setFeedback(isWebViewReady ? 'Toque em "Iniciar Captura" para comecar.' : 'Carregando WebView...');
+    setFeedback(
+      isWebPlatform || isWebViewReady
+        ? 'Toque em "Iniciar Captura" para comecar.'
+        : 'Carregando WebView...'
+    );
     setErrorMessage('');
     setSuccessMessage('');
     setRedirectUrl('');
     setCaptureMode('unknown');
     setIsSdkReady(false);
     onCancel?.();
-  }, [isWebViewReady, onCancel, sendToWebView]);
+  }, [isWebPlatform, isWebViewReady, onCancel, sendToWebView]);
 
-  // ── Process captured image ────────────────────────────────
+  // -- Process captured image --
   const processCapturedImage = useCallback(
     async (imageData: string, mode: CaptureMode) => {
       setPhase('submitting');
@@ -717,7 +828,7 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
         setFeedback('Verificacao facial concluida com sucesso.');
         setSuccessMessage(
           mode === 'sdk'
-            ? 'Captura validada com SDK Identy (liveness detection).'
+            ? 'Captura validada com SDK Identy v6.3.0 (liveness detection).'
             : 'Captura validada com camera nativa.'
         );
 
@@ -741,7 +852,7 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
     [getErrorMessage, getRedirectUrl, onError, onSuccess, submitToBackend, validateResponse]
   );
 
-  // ── Native camera (fallback) ──────────────────────────────
+  // -- Native camera (fallback) --
   const startNativeCameraFlow = useCallback(async () => {
     const permission = cameraPermission?.granted ? cameraPermission : await requestCameraPermission();
     if (!permission?.granted) {
@@ -772,7 +883,94 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
     }
   }, [captureMode, onError, processCapturedImage]);
 
-  // ── Handle WebView messages ───────────────────────────────
+  // -- Web SDK capture (Expo Web only) --
+  const startWebSdkCapture = useCallback(async () => {
+    if (!webSdkModule) {
+      setPhase('error');
+      setErrorMessage('SDK Web nao carregado');
+      return;
+    }
+
+    try {
+      setPhase('sdk_loading');
+      setFeedback('Inicializando SDK Identy no navegador...');
+
+      // preInitialize (if not done)
+      if (!webSdkPreInitDone) {
+        console.log('[FacialCapture] Web: preInitialize...');
+        const modelUrl = `${urlBase}/api/v1/models`;
+        const pubKeyUrl = `${urlBase}/api/v1/pub_key`;
+
+        await webSdkModule.preInitialize(
+          { URL: modelUrl },
+          {
+            URL: {
+              url: pubKeyUrl,
+              headers: [
+                { name: 'LogAPITrigger', value: 'true' },
+                { name: 'requestID', value: `web-preinit-${Date.now()}` },
+              ],
+            },
+          }
+        );
+        webSdkPreInitDone = true;
+        console.log('[FacialCapture] Web: preInitialize OK');
+      }
+
+      // Create SDK instance
+      const sdkInstance = new webSdkModule.FaceSDK({
+        enableAS: true,
+        asThreshold: webSdkModule.AsThreshold?.MEDIUM || 'MEDIUM',
+        requiredTemplates: [webSdkModule.Template?.PNG || 'PNG'],
+        showCaptureTraining: false,
+        base64EncodingFlag: true,
+        allowClose: true,
+        enableEyesStatusDetector: true,
+        skipSupportCheck: false,
+        transaction: { type: 1 },
+        appUI: webSdkModule.AppUI?.TICKING || 'TICKING',
+        allowCameraSelect: false,
+        assisted: false,
+        localization: { language: 'pt-BR' },
+        graphics: { canvas: { label: 'white' } },
+        enableRetakeScreen: true,
+      });
+
+      webSdkInstanceRef.current = sdkInstance;
+
+      setFeedback('Inicializando camera e modelos WASM...');
+      await sdkInstance.initialize();
+
+      setCaptureMode('sdk');
+      setIsSdkReady(true);
+      setPhase('capturing');
+      setFeedback('SDK Identy capturando... Posicione o rosto no guia.');
+
+      // Start capture
+      const blob = await sdkInstance.capture();
+      console.log('[FacialCapture] Web: capture retornou Blob, size:', blob.size);
+
+      // Convert Blob to base64
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Falha ao converter Blob'));
+        reader.readAsDataURL(blob);
+      });
+
+      setPhase('processing');
+      setFeedback('Imagem capturada. Enviando para validacao...');
+      await processCapturedImage(base64, 'sdk');
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      console.error('[FacialCapture] Web SDK error:', error.message);
+      setPhase('error');
+      setErrorMessage(error.message);
+      onError?.(error);
+    }
+  }, [urlBase, processCapturedImage, onError]);
+
+  // -- Handle WebView messages (native path) --
   const handleWebViewMessage = useCallback(
     (event: WebViewMessageEvent) => {
       try {
@@ -793,8 +991,8 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
             setPhase('sdk_loading');
             setFeedback(
               message.stage === 'initialize'
-                ? 'Inicializando SDK Identy (WASM)...'
-                : 'Carregando SDK Identy...'
+                ? 'Inicializando SDK Identy (WASM + modelos)...'
+                : 'Carregando SDK Identy v6.3.0...'
             );
             break;
 
@@ -822,7 +1020,7 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
 
           case 'CAPTURE_RESULT':
             if (message.status === 'success' && message.imageData) {
-              console.log('[FacialCapture] Imagem capturada pelo SDK');
+              console.log('[FacialCapture] Imagem capturada pelo SDK via WebView');
               setPhase('processing');
               setFeedback('Imagem capturada. Enviando para validacao...');
               processCapturedImage(message.imageData, 'sdk');
@@ -851,8 +1049,16 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
     [processCapturedImage]
   );
 
-  // ── Start capture flow ─────────────────────────────────────
+  // -- Start capture flow --
   const handleStartCapture = useCallback(async () => {
+    // Web path: use SDK directly
+    if (isWebPlatform && webSdkModule) {
+      console.log('[FacialCapture] Iniciando captura via SDK Web direto');
+      await startWebSdkCapture();
+      return;
+    }
+
+    // Native path: use WebView
     if (!isWebViewReady) {
       setErrorMessage('WebView ainda carregando. Aguarde.');
       return;
@@ -876,16 +1082,16 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
         authUrl: authUrl,
       },
     });
-  }, [authUrl, isWebViewReady, livenessUrl, sdkServerUrl, sendToWebView, urlBase]);
+  }, [authUrl, isWebPlatform, isWebViewReady, livenessUrl, sdkServerUrl, sendToWebView, startWebSdkCapture, urlBase]);
 
-  // ── Trigger SDK capture ────────────────────────────────────
+  // -- Trigger SDK capture (native path) --
   const handleSdkCapture = useCallback(() => {
     setPhase('capturing');
     setFeedback('Iniciando captura pelo SDK Identy...');
     sendToWebView({ type: 'START_CAPTURE' });
   }, [sendToWebView]);
 
-  // ── Dynamic labels ─────────────────────────────────────────
+  // -- Dynamic labels --
   const phaseTitle = useMemo(() => {
     switch (phase) {
       case 'idle': return 'Reconhecimento Facial';
@@ -903,7 +1109,7 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
 
   const modeLabel = useMemo(() => {
     switch (captureMode) {
-      case 'sdk': return 'SDK Identy (WASM + Liveness)';
+      case 'sdk': return 'SDK Identy v6.3.0 (WASM + Liveness)';
       case 'native': return 'Camera nativa (fallback)';
       default: return 'Aguardando';
     }
@@ -919,7 +1125,7 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
     return 300;
   }, [phase, captureMode]);
 
-  // ── Render ─────────────────────────────────────────────────
+  // -- Render --
   return (
     <ScreenContainer className="p-4 justify-center">
       <ScrollView contentContainerStyle={{ flexGrow: 1 }} scrollEnabled>
@@ -932,7 +1138,9 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
             ) : null}
             <Text className="text-xs text-muted text-center mt-1">Modo: {modeLabel}</Text>
             <Text className="text-xs text-muted text-center opacity-60">
-              WebView: {isWebViewReady ? 'OK' : '...'} | SDK: {isSdkReady ? 'OK' : '...'} | Fase: {phase}
+              {isWebPlatform ? 'Plataforma: Web' : `WebView: ${isWebViewReady ? 'OK' : '...'}`}
+              {' | SDK: '}{isSdkReady ? 'OK' : '...'}
+              {' | Fase: '}{phase}
             </Text>
           </View>
 
@@ -943,8 +1151,8 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
             </View>
           )}
 
-          {/* WebView — SDK runs inside */}
-          {phase !== 'idle' && (
+          {/* WebView -- only on native (not web), only when not idle */}
+          {!isWebPlatform && phase !== 'idle' && (
             <View className="rounded-2xl overflow-hidden border border-border">
               <WebView
                 ref={webViewRef}
@@ -971,8 +1179,8 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
             </View>
           )}
 
-          {/* SDK Capture button */}
-          {phase === 'sdk_ready' && captureMode === 'sdk' && (
+          {/* SDK Capture button (native path, SDK ready) */}
+          {!isWebPlatform && phase === 'sdk_ready' && captureMode === 'sdk' && (
             <TouchableOpacity
               onPress={handleSdkCapture}
               className="bg-blue-600 rounded-xl p-4"
@@ -1060,20 +1268,38 @@ function FacialCaptureContent({ onSuccess, onError, onCancel }: FacialCapturePro
             <View className="gap-3">
               <TouchableOpacity
                 onPress={handleStartCapture}
-                className={`rounded-xl p-4 ${isWebViewReady ? 'bg-blue-600' : 'bg-blue-300'}`}
+                className={`rounded-xl p-4 ${
+                  isWebPlatform || isWebViewReady ? 'bg-blue-600' : 'bg-blue-300'
+                }`}
                 activeOpacity={0.7}
-                disabled={!isWebViewReady}
+                disabled={!isWebPlatform && !isWebViewReady}
               >
                 <Text className="text-center text-white font-bold text-base">
-                  {isWebViewReady ? 'Iniciar Captura' : 'Aguardando WebView...'}
+                  {isWebPlatform
+                    ? 'Iniciar Captura (SDK Web)'
+                    : isWebViewReady
+                    ? 'Iniciar Captura'
+                    : 'Aguardando WebView...'}
                 </Text>
               </TouchableOpacity>
 
-              <View className="bg-amber-900/30 border border-amber-700/40 rounded-xl p-3">
-                <Text className="text-amber-200 text-xs text-center leading-relaxed">
-                  Certifique-se de que o servidor SDK esta rodando:{'\n'}
-                  <Text className="font-mono font-bold">node scripts/sdk-server.js</Text>
-                  {'\n'}URL: {sdkServerUrl}
+              {!isWebPlatform && (
+                <View className="bg-amber-900/30 border border-amber-700/40 rounded-xl p-3">
+                  <Text className="text-amber-200 text-xs text-center leading-relaxed">
+                    Certifique-se de que o servidor SDK esta rodando:{'\n'}
+                    <Text className="font-mono font-bold">pnpm dev:sdk</Text>
+                    {'\n'}URL: {sdkServerUrl}
+                  </Text>
+                </View>
+              )}
+
+              {/* Platform info */}
+              <View className="bg-gray-800/30 border border-gray-700/40 rounded-xl p-3">
+                <Text className="text-gray-300 text-xs text-center leading-relaxed">
+                  Plataforma: {Platform.OS}
+                  {isWebPlatform ? ' (SDK direto)' : ' (WebView + servidor local)'}
+                  {'\n'}SDK: @identy/identy-face v6.3.0-b01
+                  {'\n'}Backend: {credifyApiBase}
                 </Text>
               </View>
             </View>

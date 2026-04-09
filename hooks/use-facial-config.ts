@@ -257,6 +257,7 @@ export function useFacialConfig() {
 // Constantes para compatibilidade com modelo
 // NOTA: As credenciais CLIENT_ID/SECRET funcionam APENAS no ambiente DEV
 // (dev-api.credify.com.br). Se precisar usar producao, atualize aqui.
+// SDK: @identy/identy-face@6.3.0-b01 + @identy/identy-common@5.0.0
 export const CREDIFY_CONFIG = {
   AS_SERVER_CONFIG: 'https://app-iden-dev.credify.com.br/api/v1/pub_key',
   AS_SERVER_LIVENESS: 'https://app-iden-dev.credify.com.br/api/v1/secure/face/as',

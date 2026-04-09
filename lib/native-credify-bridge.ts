@@ -17,13 +17,17 @@ function resolveAuthEndpoint(url: string): string {
 }
 
 /**
- * Native Bridge para SDK Credify - Versão Corrigida
- * 
- * Correções:
- * - ✅ CORS workaround implementado
- * - ✅ Melhor tratamento de erros
- * - ✅ Logs detalhados para debugging
- * - ✅ Retry automático com backoff
+ * Native Bridge para SDK Credify
+ *
+ * NOTA: Este modulo e usado como fallback quando o SDK Identy (@identy/identy-face
+ * v6.3.0-b01) nao esta disponivel. O fluxo principal de captura facial e gerenciado
+ * por facial-capture.tsx, que carrega o SDK via WebView (nativo) ou import direto (web).
+ *
+ * Funcionalidades:
+ * - CORS workaround implementado
+ * - Melhor tratamento de erros
+ * - Logs detalhados para debugging
+ * - Retry automatico com backoff
  */
 
 export interface InitializeOptions {

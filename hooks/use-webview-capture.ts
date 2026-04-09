@@ -1,9 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { CREDIFY_CONFIG } from '@/hooks/use-facial-config';
+/**
+ * useWebViewCapture - Utility hook (DEPRECATED)
+ *
+ * This hook is no longer used by the main facial-capture screen.
+ * All WebView communication, authentication, and backend submission
+ * logic has been moved directly into facial-capture.tsx to eliminate
+ * the following issues:
+ *
+ * 1. `postMessage()` does not work on React Native WebView refs.
+ *    You must use `injectJavaScript()` instead.
+ * 2. `new Blob()` is not available in React Native's JS runtime.
+ * 3. Dual message processing caused state machine desync.
+ *
+ * This file is kept for backwards compatibility but is NOT active.
+ * The main facial capture flow is in:
+ *   app/(tabs)/(screens)/facial-capture.tsx
+ *
+ * @deprecated Use the self-contained facial-capture component instead.
+ */
 
-// ─────────────────────────────────────────────────────────────
-// Tipos públicos
-// ─────────────────────────────────────────────────────────────
+import { useCallback, useRef, useState } from 'react';
+import { CREDIFY_CONFIG } from '@/hooks/use-facial-config';
 
 export interface WebViewCaptureOptions {
   modelUrl: string;
@@ -36,42 +52,8 @@ export interface BackendResponse {
   [key: string]: unknown;
 }
 
-// ─────────────────────────────────────────────────────────────
-// Tipos internos
-// ─────────────────────────────────────────────────────────────
-
-type PendingTimeout = ReturnType<typeof setTimeout>;
-
-interface PendingInitialize {
-  resolve: () => void;
-  reject: (error: Error) => void;
-  timeout: PendingTimeout;
-}
-
-interface PendingCapture {
-  resolve: (result: WebViewCaptureResult) => void;
-  reject: (error: Error) => void;
-  timeout: PendingTimeout;
-}
-
-interface PendingPromisesRef {
-  initialize?: PendingInitialize;
-  capture?: PendingCapture;
-}
-
-// ─────────────────────────────────────────────────────────────
-// Utilitários
-// ─────────────────────────────────────────────────────────────
-
 function normalizeApiBase(url: string): string {
   return url.trim().replace(/\/+$/, '').replace(/\/livelinesscapture$/i, '');
-}
-
-function resolveLivenessUrl(url: string): string {
-  const normalized = url.trim().replace(/\/+$/, '');
-  return /\/livelinesscapture$/i.test(normalized)
-    ? normalized
-    : `${normalizeApiBase(normalized)}/livelinesscapture`;
 }
 
 function resolveAuthUrl(authUrl: string, backendUrl: string): string {
@@ -84,123 +66,24 @@ function resolveAuthUrl(authUrl: string, backendUrl: string): string {
   return `${normalizeApiBase(backendUrl)}/auth`;
 }
 
-function buildRequestId(): string {
-  return `webview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function stripImagePrefix(imageData: string): string {
-  return imageData.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '');
-}
-
-function parseResponsePayload(payload: string): BackendResponse {
-  try {
-    return JSON.parse(payload) as BackendResponse;
-  } catch {
-    return {
-      status: 'error',
-      error: payload || 'Resposta inválida do servidor',
-      message: payload || 'Resposta inválida do servidor',
-    };
-  }
-}
-
-// ─────────────────────────────────────────────────────────────
-// Hook
-// ─────────────────────────────────────────────────────────────
-
+/**
+ * @deprecated - Logic moved to facial-capture.tsx
+ */
 export function useWebViewCapture() {
   const [isReady, setIsReady] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [isWebViewReady, setIsWebViewReady] = useState(false);
 
-  const mountedRef = useRef(true);
   const webViewRef = useRef<any>(null);
-  const queuedMessagesRef = useRef<any[]>([]);
-  const webViewReadyRef = useRef(false);
   const authTokenRef = useRef<string | null>(null);
-  const pendingPromisesRef = useRef<PendingPromisesRef>({});
-
-  // ── Limpar promessas pendentes ────────────────────────────
-
-  const clearInitializePending = useCallback(() => {
-    const pending = pendingPromisesRef.current.initialize;
-    if (pending) {
-      clearTimeout(pending.timeout);
-      pendingPromisesRef.current.initialize = undefined;
-    }
-  }, []);
-
-  const clearCapturePending = useCallback(() => {
-    const pending = pendingPromisesRef.current.capture;
-    if (pending) {
-      clearTimeout(pending.timeout);
-      pendingPromisesRef.current.capture = undefined;
-    }
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      clearInitializePending();
-      clearCapturePending();
-    };
-  }, [clearCapturePending, clearInitializePending]);
-
-  // ── Enviar mensagens para a WebView ───────────────────────
-
-  const flushQueuedMessages = useCallback(() => {
-    if (!webViewRef.current || !webViewReadyRef.current || queuedMessagesRef.current.length === 0) {
-      return;
-    }
-    const queued = [...queuedMessagesRef.current];
-    queuedMessagesRef.current = [];
-    for (const msg of queued) {
-      try {
-        webViewRef.current.postMessage(JSON.stringify(msg));
-      } catch (err) {
-        console.warn('[useWebViewCapture] Falha ao enviar mensagem da fila:', err);
-      }
-    }
-  }, []);
-
-  const sendMessageToWebView = useCallback(
-    (message: any) => {
-      const payload = JSON.stringify(message);
-      if (!webViewRef.current || !webViewReadyRef.current) {
-        console.log('[useWebViewCapture] WebView não pronta, enfileirando:', message.type);
-        queuedMessagesRef.current.push(message);
-        return false;
-      }
-      try {
-        webViewRef.current.postMessage(payload);
-        console.log('[useWebViewCapture] Mensagem enviada para WebView:', message.type);
-        return true;
-      } catch (err) {
-        console.warn('[useWebViewCapture] Erro ao enviar mensagem:', err);
-        queuedMessagesRef.current.push(message);
-        return false;
-      }
-    },
-    []
-  );
-
-  // ── Autenticação ──────────────────────────────────────────
 
   const resolveAuthToken = useCallback(async (authUrl: string, backendUrl: string) => {
-    if (authTokenRef.current) {
-      return authTokenRef.current;
-    }
+    if (authTokenRef.current) return authTokenRef.current;
 
     const resolvedAuthUrl = resolveAuthUrl(authUrl, backendUrl);
-    console.log('[useWebViewCapture] Autenticando em:', resolvedAuthUrl);
-
     const response = await fetch(resolvedAuthUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({
         ClientID: CREDIFY_CONFIG.CLIENT_ID,
         ClientSecret: CREDIFY_CONFIG.CLIENT_SECRET,
@@ -209,279 +92,42 @@ export function useWebViewCapture() {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Falha na autenticação (${response.status}): ${errorText || response.statusText}`);
+      throw new Error(`Falha na autenticacao (${response.status}): ${errorText}`);
     }
 
     const data = await response.json();
     const token = data?.Dados || data?.token || data?.access_token;
-
-    if (!token) {
-      throw new Error('Token de autenticação não encontrado na resposta do backend');
-    }
+    if (!token) throw new Error('Token nao encontrado');
 
     authTokenRef.current = token;
-    console.log('[useWebViewCapture] ✅ Token obtido com sucesso');
     return token;
   }, []);
 
-  // ── Resolver promessas pendentes ──────────────────────────
-
-  const resolveInitialize = useCallback(() => {
-    const pending = pendingPromisesRef.current.initialize;
-    if (!pending) return;
-    clearTimeout(pending.timeout);
-    pendingPromisesRef.current.initialize = undefined;
-    pending.resolve();
+  const initialize = useCallback(async (_options: WebViewCaptureOptions) => {
+    console.warn('[useWebViewCapture] DEPRECATED - use facial-capture.tsx directly');
+    setIsReady(true);
   }, []);
-
-  const rejectInitialize = useCallback((error: Error) => {
-    const pending = pendingPromisesRef.current.initialize;
-    if (!pending) return;
-    clearTimeout(pending.timeout);
-    pendingPromisesRef.current.initialize = undefined;
-    pending.reject(error);
-  }, []);
-
-  const resolveCapture = useCallback((result: WebViewCaptureResult) => {
-    const pending = pendingPromisesRef.current.capture;
-    if (!pending) return;
-    clearTimeout(pending.timeout);
-    pendingPromisesRef.current.capture = undefined;
-    pending.resolve(result);
-  }, []);
-
-  // ── Processar mensagens da WebView ────────────────────────
-
-  const handleWebViewMessage = useCallback(
-    (input: any) => {
-      try {
-        const rawData = typeof input === 'string' ? input : input?.nativeEvent?.data;
-        if (!rawData) {
-          console.warn('[useWebViewCapture] Dados da mensagem vazios');
-          return;
-        }
-
-        const data = JSON.parse(rawData);
-        const type = data?.type;
-
-        // Log apenas tipos não-ruidosos
-        if (type !== 'WEBVIEW_LOG') {
-          console.log('[useWebViewCapture] ←', type, data.mode || data.stage || '');
-        }
-
-        switch (type) {
-          case 'WEBVIEW_READY':
-            webViewReadyRef.current = true;
-            if (mountedRef.current) {
-              setIsWebViewReady(true);
-            }
-            flushQueuedMessages();
-            break;
-
-          case 'SDK_INITIALIZED':
-          case 'SDK_FALLBACK':
-            if (mountedRef.current) {
-              setIsReady(true);
-            }
-            resolveInitialize();
-            break;
-
-          case 'SDK_ERROR':
-            rejectInitialize(new Error(data.error || 'Erro na inicialização do SDK'));
-            break;
-
-          case 'CAPTURE_SUCCESS':
-            if (mountedRef.current) {
-              setIsCapturing(false);
-            }
-            resolveCapture({
-              status: 'success',
-              message: 'Imagem capturada com sucesso',
-              imageData: data.imageData,
-            });
-            break;
-
-          case 'ERROR':
-            if (mountedRef.current) {
-              setIsCapturing(false);
-            }
-            resolveCapture({
-              status: 'error',
-              message: data.error || 'Erro desconhecido',
-              error: new Error(data.error || 'Erro desconhecido'),
-            });
-            break;
-
-          case 'CANCELLED':
-            if (mountedRef.current) {
-              setIsCapturing(false);
-            }
-            resolveCapture({
-              status: 'cancelled',
-              message: 'Captura cancelada pelo usuário',
-            });
-            break;
-
-          // Logs da WebView — apenas repassar para o console RN
-          case 'WEBVIEW_LOG':
-            if (data?.message) {
-              console.log('[WebView]', data.message, data.details ?? '');
-            }
-            break;
-        }
-      } catch (error) {
-        console.error('[useWebViewCapture] Erro ao processar mensagem:', error);
-      }
-    },
-    [flushQueuedMessages, rejectInitialize, resolveCapture, resolveInitialize]
-  );
-
-  // ── Inicializar (envia INIT_CONFIG para a WebView) ────────
-
-  const initialize = useCallback(
-    async (options: WebViewCaptureOptions) => {
-      console.log('[useWebViewCapture] → Inicializando com:', {
-        modelUrl: options.modelUrl,
-        pubKeyUrl: options.pubKeyUrl,
-      });
-      setIsReady(false);
-
-      return new Promise<void>((resolve, reject) => {
-        clearInitializePending();
-
-        const timeout = setTimeout(() => {
-          pendingPromisesRef.current.initialize = undefined;
-          console.warn('[useWebViewCapture] ⏱ Timeout ao inicializar — resolvendo com fallback');
-          // Em vez de rejeitar, resolver mesmo assim para que o fluxo não trave
-          if (mountedRef.current) {
-            setIsReady(true);
-          }
-          resolve();
-        }, 25000);
-
-        pendingPromisesRef.current.initialize = { resolve, reject, timeout };
-
-        sendMessageToWebView({
-          type: 'INIT_CONFIG',
-          config: options,
-        });
-      });
-    },
-    [clearInitializePending, sendMessageToWebView]
-  );
-
-  // ── Iniciar captura ───────────────────────────────────────
 
   const startCapture = useCallback(async (): Promise<WebViewCaptureResult> => {
-    return new Promise((resolve, _reject) => {
-      setIsCapturing(true);
-      clearCapturePending();
-
-      const timeout = setTimeout(() => {
-        pendingPromisesRef.current.capture = undefined;
-        if (mountedRef.current) {
-          setIsCapturing(false);
-        }
-        resolve({
-          status: 'error',
-          message: 'Timeout na captura (30s)',
-          error: new Error('Timeout na captura'),
-        });
-      }, 30000);
-
-      pendingPromisesRef.current.capture = { resolve, reject: _reject, timeout };
-      sendMessageToWebView({ type: 'START_CAPTURE' });
-    });
-  }, [clearCapturePending, sendMessageToWebView]);
-
-  // ── Parar captura ─────────────────────────────────────────
+    console.warn('[useWebViewCapture] DEPRECATED');
+    setIsCapturing(true);
+    return { status: 'error', message: 'Hook deprecated' };
+  }, []);
 
   const stopCapture = useCallback(() => {
-    console.log('[useWebViewCapture] → Parando captura');
-    if (mountedRef.current) {
-      setIsCapturing(false);
-    }
-    clearCapturePending();
-    sendMessageToWebView({ type: 'STOP_CAPTURE' });
-  }, [clearCapturePending, sendMessageToWebView]);
-
-  // ── Enviar imagem para o backend Credify ──────────────────
+    setIsCapturing(false);
+  }, []);
 
   const submitToBackend = useCallback(
-    async (
-      imageData: string,
-      backendUrl: string,
-      authUrl: string,
-      retryOnAuthFailure = true
-    ): Promise<BackendResponse> => {
-      const livenessUrl = resolveLivenessUrl(backendUrl);
-      const requestID = buildRequestId();
-      const imageBase64 = stripImagePrefix(imageData);
-
-      console.log('[useWebViewCapture] 📤 Enviando para:', livenessUrl);
-
-      let token: string | null = null;
-      try {
-        token = await resolveAuthToken(authUrl, backendUrl);
-      } catch (authError) {
-        console.warn('[useWebViewCapture] Falha ao autenticar:', authError);
-      }
-
-      const formData = new FormData();
-      const payloadBlob = new Blob([imageBase64], { type: 'text/plain' });
-      formData.append('file', payloadBlob, 'bdata');
-
-      const headers: Record<string, string> = {
-        'X-DEBUG': CREDIFY_CONFIG.WERO,
-        LogAPITrigger: 'true',
-        RequestID: requestID,
-        requestID,
-        application: CREDIFY_CONFIG.APPLICATION,
-        wero: CREDIFY_CONFIG.WERO,
-        keyurl: CREDIFY_CONFIG.AS_SERVER_CONFIG,
-      };
-
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
-
-      const response = await fetch(`${livenessUrl}?ts=${Date.now()}`, {
-        method: 'POST',
-        headers,
-        body: formData,
-      });
-
-      const responseText = await response.text();
-      const payload = parseResponsePayload(responseText);
-
-      if (response.status === 401 && retryOnAuthFailure) {
-        authTokenRef.current = null;
-        return submitToBackend(imageData, backendUrl, authUrl, false);
-      }
-
-      if (!response.ok) {
-        const message =
-          payload?.RESPOSTA?.LIVELINESS?.description ||
-          payload?.RESPOSTA?.LIVELINESS?.message ||
-          payload?.error ||
-          payload?.message ||
-          `Erro HTTP ${response.status}`;
-        throw new Error(message);
-      }
-
-      return payload;
+    async (_imageData: string, _backendUrl: string, _authUrl: string): Promise<BackendResponse> => {
+      console.warn('[useWebViewCapture] DEPRECATED - use facial-capture.tsx directly');
+      return { error: 'Hook deprecated' };
     },
-    [resolveAuthToken]
+    []
   );
 
-  // ── Validar resposta do backend ───────────────────────────
-
   const validateResponse = useCallback((response: BackendResponse): boolean => {
-    return Boolean(
-      response?.RESPOSTA?.LIVELINESS?.code === 200 ||
-        response?.success === true ||
-        response?.status === 'success'
-    );
+    return Boolean(response?.RESPOSTA?.LIVELINESS?.code === 200 || response?.success);
   }, []);
 
   const getRedirectUrl = useCallback((response: BackendResponse): string | null => {
@@ -494,8 +140,16 @@ export function useWebViewCapture() {
       response?.RESPOSTA?.LIVELINESS?.message ||
       response?.error ||
       response?.message ||
-      'Erro desconhecido no backend'
+      'Erro desconhecido'
     );
+  }, []);
+
+  const handleWebViewMessage = useCallback((_input: unknown) => {
+    // No-op - deprecated
+  }, []);
+
+  const sendMessageToWebView = useCallback((_message: unknown) => {
+    // No-op - deprecated
   }, []);
 
   return {

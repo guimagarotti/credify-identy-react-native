@@ -81,12 +81,12 @@ class CredifyBackendClient {
   private isInitialized = false;
   private modelUrl = "";
   private pubKeyUrl = "";
-  private apiBase = process.env.REACT_APP_URL_BASE || "https://app-iden.credify.com.br";
+  private apiBase = process.env.REACT_APP_URL_BASE || "https://app-iden-dev.credify.com.br";
   private livenessEndpoint = resolveLivenessEndpoint(
-    process.env.REACT_APP_URL_BASE_CREDIFY || "https://api.credify.com.br/livelinesscapture"
+    process.env.REACT_APP_URL_BASE_CREDIFY || "https://dev-api.credify.com.br/livelinesscapture"
   );
   private authEndpoint = resolveAuthEndpoint(
-    process.env.REACT_APP_URL_BASE_CREDIFY || "https://api.credify.com.br/livelinesscapture"
+    process.env.REACT_APP_URL_BASE_CREDIFY || "https://dev-api.credify.com.br/livelinesscapture"
   );
   private authToken: string | null = null;
   private clientID = CREDIFY_CONFIG.CLIENT_ID;
